@@ -21,13 +21,13 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 
 tf.random.set_seed(42)
 
-def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, calc_goal, results, test_idx, best_window_model_name, best_stat_model_name, best_step_model, reports_dir, calibration_start_index=None, skip_direct_forecast=False):
+def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, calc_goal, results, test_idx, best_window_model_name, best_stat_model_name, best_step_model, reports_dir, hierarchical_features=1, cliping_and_customLoss=1, calibration_start_index=None, skip_direct_forecast=False):
     if calc_goal == 'TEC':
-        x_train_s, x_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y, datas, test_idx,  y_train_s_combined, y_test_s_combined, y_test_combined = prepare_stat_data(data_path, test_start_index=test_start_index)
-        xw_train_s, xw_test_s, yw_train_s, yw_test_s, yw_test, scaler_yw, datasw, testw_idx,  yw_train_s_combined, yw_test_s_combined, yw_test_combined = prepare_window_data(data_path, test_start_index=test_start_index)
+        x_train_s, x_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y, datas, test_idx,  y_train_s_combined, y_test_s_combined, y_test_combined = prepare_stat_data(data_path, test_start_index, cliping_and_customLoss)
+        xw_train_s, xw_test_s, yw_train_s, yw_test_s, yw_test, scaler_yw, datasw, testw_idx,  yw_train_s_combined, yw_test_s_combined, yw_test_combined = prepare_window_data(data_path, test_start_index, cliping_and_customLoss)
     else:
-        x_train_s, x_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y, datas, test_idx,  y_train_s_combined, y_test_s_combined, y_test_combined = prepare_meta_data(results, data_path, test_idx, test_start_index, calc_goal, best_window_model_name, best_stat_model_name, best_step_model)
-        xw_train_s, xw_test_s, yw_train_s, yw_test_s, yw_test, scaler_yw, datasw, testw_idx,  yw_train_s_combined, yw_test_s_combined, yw_test_combined = prepare_meta_window_data(results, data_path, test_idx, test_start_index, calc_goal, best_window_model_name, best_stat_model_name, best_step_model)
+        x_train_s, x_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y, datas, test_idx,  y_train_s_combined, y_test_s_combined, y_test_combined = prepare_meta_data(results, data_path, test_idx, test_start_index, calc_goal, best_window_model_name, best_stat_model_name, best_step_model, hierarchical_features, cliping_and_customLoss)
+        xw_train_s, xw_test_s, yw_train_s, yw_test_s, yw_test, scaler_yw, datasw, testw_idx,  yw_train_s_combined, yw_test_s_combined, yw_test_combined = prepare_meta_window_data(results, data_path, test_idx, test_start_index, calc_goal, best_window_model_name, best_stat_model_name, best_step_model, hierarchical_features, cliping_and_customLoss)
     results = {}
     calibration_results = {}
     constraints = {calc_goal + '_Available_Nmin': scaler_y.inverse_transform(y_test_s_combined[:, 2][:, None]),
@@ -63,7 +63,9 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     y_val_s = y_cal_s if has_calibration else y_test_s
     y_val_s_combined = y_cal_s_combined if has_calibration else y_test_s_combined
 
-    for loss_type in ['custom', 'mae']:
+    loss_types = _get_loss_types(cliping_and_customLoss)
+
+    for loss_type in loss_types:
         print(f"\n--- Processing LSTM with {loss_type.upper()} loss ---")
 
         model_lstm, early_stop_callback, current_epochs, checkpoint_filepath = get_lstm(
@@ -126,14 +128,10 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     model_lr.fit(x_fit_s, y_fit)
     if has_calibration:
         yhat_cal = model_lr.predict(x_cal_s)
-        yhat_cal[yhat_cal < scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None])] = 0
-        yhat_cal = np.where(yhat_cal > scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), yhat_cal)
-        calibration_results['Linear'] = np.maximum(yhat_cal, 0)
+        yhat_cal = _clip_predictions(yhat_cal, cliping_and_customLoss, scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]))
+        calibration_results['Linear'] = yhat_cal
     yhat = model_lr.predict(x_test_s)
-    yhat[yhat < y_test_combined[:, 2][:, None]] = 0
-    n_max = y_test_combined[:, 1][:, None]
-    yhat = np.where(yhat > n_max, n_max, yhat)
-    results['Linear'] = np.maximum(yhat, 0)
+    results['Linear'] = _clip_predictions(yhat, cliping_and_customLoss, y_test_combined[:, 2][:, None], y_test_combined[:, 1][:, None])
 
     # ---  poly Regression ---
     print('LRpoly_Stat_Model')
@@ -146,14 +144,10 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     model_poly.fit(x_train_poly, y_fit)
     if has_calibration:
         yhat_cal = model_poly.predict(x_cal_poly)
-        yhat_cal[yhat_cal < scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None])] = 0
-        yhat_cal = np.where(yhat_cal > scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), yhat_cal)
-        calibration_results['Polynomial (d=2)'] = np.maximum(yhat_cal, 0)
+        yhat_cal = _clip_predictions(yhat_cal, cliping_and_customLoss, scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]))
+        calibration_results['Polynomial (d=2)'] = yhat_cal
     yhat = model_poly.predict(x_test_poly)
-    yhat[yhat < y_test_combined[:, 2][:, None]] = 0
-    n_max = y_test_combined[:, 1][:, None]
-    yhat = np.where(yhat > n_max, n_max, yhat)
-    results['Polynomial (d=2)'] = np.maximum(yhat, 0)
+    results['Polynomial (d=2)'] = _clip_predictions(yhat, cliping_and_customLoss, y_test_combined[:, 2][:, None], y_test_combined[:, 1][:, None])
 
     # ---  Gradient Boosting ---
     print('CBR_Stat_Model')
@@ -162,15 +156,11 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     if has_calibration:
         yhat_cal_s = model_cb.predict(x_cal_s).reshape(-1, 1)
         yhat_cal = scaler_y.inverse_transform(yhat_cal_s)
-        yhat_cal[yhat_cal < scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None])] = 0
-        yhat_cal = np.where(yhat_cal > scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), yhat_cal)
-        calibration_results['Boosting'] = np.maximum(yhat_cal, 0)
+        yhat_cal = _clip_predictions(yhat_cal, cliping_and_customLoss, scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]))
+        calibration_results['Boosting'] = yhat_cal
     yhat_s = model_cb.predict(x_test_s).reshape(-1, 1)
     yhat = scaler_y.inverse_transform(yhat_s)
-    yhat[yhat < y_test_combined[:, 2][:, None]] = 0
-    n_max = y_test_combined[:, 1][:, None]
-    yhat = np.where(yhat > n_max, n_max, yhat)
-    results['Boosting'] = np.maximum(yhat, 0)
+    results['Boosting'] = _clip_predictions(yhat, cliping_and_customLoss, y_test_combined[:, 2][:, None], y_test_combined[:, 1][:, None])
 
     # ---  MLP ---
     print('MLP_Stat_Model')
@@ -195,15 +185,11 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     if has_calibration:
         yhat_cal_s = model_mlp.predict(x_cal_s)
         yhat_cal = scaler_y.inverse_transform(yhat_cal_s)
-        yhat_cal[yhat_cal < scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None])] = 0
-        yhat_cal = np.where(yhat_cal > scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), yhat_cal)
-        calibration_results['MLP'] = np.maximum(yhat_cal, 0)
+        yhat_cal = _clip_predictions(yhat_cal, cliping_and_customLoss, scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]))
+        calibration_results['MLP'] = yhat_cal
     yhat_s = model_mlp.predict(x_test_s)
     yhat = scaler_y.inverse_transform(yhat_s)
-    yhat[yhat < y_test_combined[:, 2][:, None]] = 0
-    n_max = y_test_combined[:, 1][:, None]
-    yhat = np.where(yhat > n_max, n_max, yhat)
-    results['MLP'] = np.maximum(yhat, 0)
+    results['MLP'] = _clip_predictions(yhat, cliping_and_customLoss, y_test_combined[:, 2][:, None], y_test_combined[:, 1][:, None])
 
     # ---  Random Forest Regression---
     print('RFR_Stat_Model')
@@ -212,15 +198,11 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     if has_calibration:
         yhat_cal_s = model_rfr.predict(x_cal_s).reshape(-1, 1)
         yhat_cal = scaler_y.inverse_transform(yhat_cal_s)
-        yhat_cal[yhat_cal < scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None])] = 0
-        yhat_cal = np.where(yhat_cal > scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]), yhat_cal)
-        calibration_results['RandomForest'] = np.maximum(yhat_cal, 0)
+        yhat_cal = _clip_predictions(yhat_cal, cliping_and_customLoss, scaler_y.inverse_transform(y_train_s_combined[cal_start:, 2][:, None]), scaler_y.inverse_transform(y_train_s_combined[cal_start:, 1][:, None]))
+        calibration_results['RandomForest'] = yhat_cal
     yhat_s = model_rfr.predict(x_test_s).reshape(-1, 1)
     yhat = scaler_y.inverse_transform(yhat_s)
-    yhat[yhat < y_test_combined[:, 2][:, None]] = 0
-    n_max = y_test_combined[:, 1][:, None]
-    yhat = np.where(yhat > n_max, n_max, yhat)
-    results['RandomForest'] = np.maximum(yhat, 0)
+    results['RandomForest'] = _clip_predictions(yhat, cliping_and_customLoss, y_test_combined[:, 2][:, None], y_test_combined[:, 1][:, None])
 
     # ---  Gradient booster with window ---
     print('CBR_with_window_Stat_Model')
@@ -229,16 +211,12 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     if has_calibration:
         yhat_cal_s = model_cbw.predict(xw_cal_s).reshape(-1, 1)
         yhat_cal = scaler_yw.inverse_transform(yhat_cal_s)
-        yhat_cal[yhat_cal < scaler_yw.inverse_transform(yw_train_s_combined[cal_start:, 2][:, None])] = 0
-        yhat_cal = np.where(yhat_cal > scaler_yw.inverse_transform(yw_train_s_combined[cal_start:, 1][:, None]), scaler_yw.inverse_transform(yw_train_s_combined[cal_start:, 1][:, None]), yhat_cal)
-        calibration_results['Boosting_custom_with_window'] = np.maximum(yhat_cal, 0)
+        yhat_cal = _clip_predictions(yhat_cal, cliping_and_customLoss, scaler_yw.inverse_transform(yw_train_s_combined[cal_start:, 2][:, None]), scaler_yw.inverse_transform(yw_train_s_combined[cal_start:, 1][:, None]))
+        calibration_results['Boosting_custom_with_window'] = yhat_cal
     yhat_s = model_cbw.predict(xw_test_s).reshape(-1, 1)
     yhat = scaler_y.inverse_transform(yhat_s)
 
-    yhat[yhat < yw_test_combined[:, 2][:, None]] = 0
-    n_max = yw_test_combined[:, 1][:, None]
-    yhat = np.where(yhat > n_max, n_max, yhat)
-    results['Boosting_custom_with_window'] = np.maximum(yhat, 0)
+    results['Boosting_custom_with_window'] = _clip_predictions(yhat, cliping_and_customLoss, yw_test_combined[:, 2][:, None], yw_test_combined[:, 1][:, None])
 
     # ---  LSTM with window ---
     print('LSTM_with_window_Stat_Model Evaluation')
@@ -247,7 +225,9 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     xw_test_lstm = xw_test_s.reshape((xw_test_s.shape[0], 1, xw_test_s.shape[1]))
     xw_val_lstm = xw_cal_s.reshape((xw_cal_s.shape[0], 1, xw_cal_s.shape[1])) if has_calibration else xw_test_lstm
 
-    for loss_type in ['custom', 'mae']:
+    loss_types = _get_loss_types(cliping_and_customLoss)
+
+    for loss_type in loss_types:
         print(f"\n--- Processing LSTM with window ({loss_type.upper()} loss) ---")
 
         model_lstmrw, early_stop_callback, current_epochs, checkpoint_filepath = get_lstm(
@@ -356,20 +336,20 @@ def calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, ca
     # ---  LSTM direct forecast---
     print('LSTM_direct_Stat_Model')
     if calc_goal == 'TEC':
-        lstm_multi_results, lstm_multi_metrics = train_lstm_direct_multistep(data_path, checkpoint_dir, n_out, test_start_index, calc_goal)
+        lstm_multi_results, lstm_multi_metrics = train_lstm_direct_multistep(data_path, checkpoint_dir, n_out, test_start_index, calc_goal, cliping_and_customLoss)
     else :
         lstm_multi_results, lstm_multi_metrics = train_lstm_meta_direct_multistep(data_path, checkpoint_dir, n_out, test_start_index, results,
-                                     best_window_model_name, test_idx, best_step_model, best_stat_model_name, calc_goal)
+                                     best_window_model_name, test_idx, best_step_model, best_stat_model_name, calc_goal, hierarchical_features, cliping_and_customLoss)
     lstm_multi_results = np.array(lstm_multi_results).reshape(-1, 14)
     lstm_multi_metrics = np.array(lstm_multi_metrics).reshape(-1, 4)
     # --- Boosting with window direct forecast---
     print('CBR_direct_Stat_Model')
     if calc_goal == 'TEC':
-        cbr_multi_results, cbr_multi_metrics = train_cbr_direct_multistep(data_path, checkpoint_dir, calc_goal, n_out, test_start_index)
+        cbr_multi_results, cbr_multi_metrics = train_cbr_direct_multistep(data_path, checkpoint_dir, calc_goal, n_out, test_start_index, cliping_and_customLoss)
     else:
         cbr_multi_results, cbr_multi_metrics = train_cbr_meta_direct_multistep(data_path, checkpoint_dir, n_out,
                                                                          test_start_index, results,
-                                     best_window_model_name, test_idx, best_step_model, best_stat_model_name, calc_goal)
+                                     best_window_model_name, test_idx, best_step_model, best_stat_model_name, calc_goal, hierarchical_features, cliping_and_customLoss)
     cbr_multi_results = np.array(cbr_multi_results).reshape(-1, 14)
     cbr_multi_metrics = np.array(cbr_multi_metrics).reshape(-1, 4)
 
@@ -401,9 +381,26 @@ def _normalize_calibration_start(calibration_start_index, train_size):
     return value
 
 
+def _get_loss_types(cliping_and_customLoss):
+    if cliping_and_customLoss == 0:
+        return ['custom']
+    if cliping_and_customLoss == 1:
+        return ['mae']
+    return ['custom', 'mae']
+
+
 def _apply_bounds(yhat, n_min_scaled, n_max_scaled, scaler_y):
     n_min = scaler_y.inverse_transform(n_min_scaled[:, None])
     n_max = scaler_y.inverse_transform(n_max_scaled[:, None])
+    yhat = yhat.copy()
+    yhat[yhat < n_min] = 0
+    yhat = np.where(yhat > n_max, n_max, yhat)
+    return np.maximum(yhat, 0)
+
+
+def _clip_predictions(yhat, cliping_and_customLoss, n_min, n_max):
+    if cliping_and_customLoss != 0:
+        return yhat
     yhat = yhat.copy()
     yhat[yhat < n_min] = 0
     yhat = np.where(yhat > n_max, n_max, yhat)

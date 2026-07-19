@@ -38,6 +38,8 @@ def main():
     parser.add_argument('--forecast_window', type=int, default=14, help='окно прогноза')
     parser.add_argument('--calibration_start', type=int, default=None, help='Индекс начала калибровочной выборки внутри train-периода')
     parser.add_argument('--target_power_unit', type=str, nargs='+', default=['B1', 'B2', 'B3', 'B4'], help='Цель предсказания')
+    parser.add_argument('--hierarchical_features', type=int, default=1, help='Hierarchical features mode')
+    parser.add_argument('--cliping_and_customLoss', type=int, default=1, help='Clipping and custom loss mode')
     parser.add_argument('--skip_direct', action='store_true')
     args = parser.parse_args()
 
@@ -45,9 +47,12 @@ def main():
     test_start_index = args.start
     calibration_start_index = args.calibration_start
     n_out = args.forecast_window
+    hierarchical_features = args.hierarchical_features
+    cliping_and_customLoss = args.cliping_and_customLoss
     model_name = os.path.basename(data_path).split('.')[0]
-    checkpoint_dir = f'checkpoint/{model_name}/'
-    reports_dir = f'data/reports/{model_name}/'
+    suffix = f"_hf{hierarchical_features}_ccl{cliping_and_customLoss}"
+    checkpoint_dir = f'checkpoint/{model_name}{suffix}/'
+    reports_dir = f'data/reports/{model_name}{suffix}/'
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(checkpoint_dir+'multistep', exist_ok=True)
     tec_results={}
@@ -64,14 +69,14 @@ def main():
 
     warnings.filterwarnings("ignore")
 
-    tec_results, tec_constraints, test_idx, best_window_model_name, best_stat_model_name, best_step_model = calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, calc_goal, tec_results, test_idx, best_window_model_name, best_stat_model_name, best_step_model, reports_dir, calibration_start_index, args.skip_direct)
+    tec_results, tec_constraints, test_idx, best_window_model_name, best_stat_model_name, best_step_model = calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, calc_goal, tec_results, test_idx, best_window_model_name, best_stat_model_name, best_step_model, reports_dir, hierarchical_features, cliping_and_customLoss, calibration_start_index, args.skip_direct)
     results[calc_goal+ '_N_Aver_pred']=tec_results[best_stat_model_name]
     results[calc_goal + '_Available_Nmin'] = tec_constraints[calc_goal + '_Available_Nmin']
     results[calc_goal + '_Available_Nmax'] = tec_constraints[calc_goal + '_Available_Nmax']
     for calc_goal in args.target_power_unit:
         print(f"--- Prediction for: {calc_goal} ---")
 
-        tg_results, tg_constraints, test_idx, best_window_model_name, best_stat_model_name, best_step_model = calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, calc_goal, tec_results, test_idx, best_window_model_name, best_stat_model_name, best_step_model, reports_dir, calibration_start_index, args.skip_direct)
+        tg_results, tg_constraints, test_idx, best_window_model_name, best_stat_model_name, best_step_model = calc_power_generation(data_path, test_start_index, checkpoint_dir, n_out, calc_goal, tec_results, test_idx, best_window_model_name, best_stat_model_name, best_step_model, reports_dir, hierarchical_features, cliping_and_customLoss, calibration_start_index, args.skip_direct)
         results[calc_goal + '_N_Aver_pred'] = tg_results[best_stat_model_name]
         results[calc_goal + '_Available_Nmin'] = tg_constraints[calc_goal + '_Available_Nmin']
         results[calc_goal + '_Available_Nmax'] = tg_constraints[calc_goal + '_Available_Nmax']
