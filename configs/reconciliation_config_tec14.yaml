@@ -1,0 +1,19 @@
+methods:
+  - independent
+  - bottom_up
+  - top_down
+  - ols
+  - wls
+  - mint
+
+data_file: data/TEC14_Data.csv
+reports_dir: data/reports/TEC14_Data
+output_dir: outputs/reconciliation_baselines_TEC14
+plant_id: TEC14
+model_name: all
+eps: 1.0e-8
+ridge_eps: 1.0e-6
+use_pinv: true
+save_raw_predictions: true
+hic_denominator: station_forecast
+rd_use_article_formula: true

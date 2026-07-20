@@ -20,6 +20,17 @@ from utils import prepare_step_data, prepare_direct_data, custom_loss
 
 tf.random.set_seed(42)
 
+
+def _build_step_model(params, sequence_length, n_features, model_loss=custom_loss):
+    model = Sequential([
+        LSTM(params['n_lstm'], input_shape=(sequence_length, n_features), unroll=True, dtype='float16'),
+        Dense(params['n_dense'], activation='relu'),
+        Dense(1, dtype='float32')
+    ])
+    model.compile(loss=model_loss, optimizer=Adam(learning_rate=params['lr']), metrics=['mse'])
+    return model
+
+
 def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_goal, cliping_and_customLoss):
     results_list = []
     metrics_list = []
@@ -37,8 +48,9 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
 
     data_with_lag, base_features, weights_train = prepare_step_data(data, train_size, n_out, cliping_and_customLoss)
 
-    max_possible_window = 1
+    max_possible_window = 3
     current_batch_size = 4096
+    model_loss = custom_loss if cliping_and_customLoss == 0 else "mae"
 
     for i in range(n_out):
         step = i + 1
@@ -52,11 +64,22 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
         if os.path.exists(current_checkpoint):
             print(f"--- Step {step}: Checkpoint found. Loading... ---")
             saved_window = all_steps_params.get(step_key, {}).get('sequence_length', 1)
-            if cliping_and_customLoss == 0.0: model = load_model(current_checkpoint, custom_objects={'custom_loss': custom_loss})
-            else: model = load_model(current_checkpoint)
-            model.optimizer.learning_rate.assign(1e-4)
-            current_epochs, patience = 50, 10
             final_sequence_length = saved_window
+            try:
+                if cliping_and_customLoss == 0:
+                    model = load_model(current_checkpoint, custom_objects={'custom_loss': custom_loss})
+                else:
+                    model = load_model(current_checkpoint)
+                model.optimizer.learning_rate.assign(1e-4)
+                current_epochs, patience = 50, 10
+            except Exception as exc:
+                print(f"--- Step {step}: Checkpoint incompatible. Rebuilding from parameters: {exc} ---")
+                if step_key not in all_steps_params:
+                    raise
+                params = all_steps_params[step_key]
+                final_sequence_length = params['sequence_length']
+                model = _build_step_model(params, final_sequence_length, x_train_scaled.shape[1], model_loss)
+                current_epochs, patience = 1000, 100
         else:
             print(f"--- Step {step}: No checkpoint.")
             current_epochs, patience = 1000, 100
@@ -65,7 +88,7 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
                 print(f"--- Step {step}: Tuning hyperparameters with Optuna... ---")
 
                 def objective(trial):
-                    seq_len = trial.suggest_categorical('sequence_length', [1])
+                    seq_len = trial.suggest_categorical('sequence_length', [1, 2, 3])
 
                     n_lstm = trial.suggest_int('n_lstm', 50, 200)
                     n_dense = trial.suggest_int('n_dense', 20, 100)
@@ -73,7 +96,7 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
 
                     def set_shapes(x, y):
                         x.set_shape((None, seq_len, x_train_scaled.shape[1]))
-                        y.set_shape((None, 3))
+                        y.set_shape((None, 3))  # или 3, в зависимости от размерности y_train_s_combined
                         return x, y
 
                     train_dataset_optuna = timeseries_dataset_from_array(
@@ -95,8 +118,7 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
                         Dense(n_dense, activation='relu'),
                         Dense(1, dtype='float32')
                     ])
-                    if cliping_and_customLoss == 0.0: m.compile(loss=custom_loss, optimizer=Adam(learning_rate=lr))
-                    else: m.compile(loss="mae", optimizer=Adam(learning_rate=lr))
+                    m.compile(loss=model_loss, optimizer=Adam(learning_rate=lr))
 
                     m.fit(
                         train_dataset_optuna,
@@ -129,7 +151,7 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
                     return mae
 
                 study = optuna.create_study(direction='minimize')
-                study.optimize(objective, n_trials=50)
+                study.optimize(objective, n_trials=100)
                 all_steps_params[step_key] = study.best_params
                 with open(params_path, 'w') as f:
                     json.dump(all_steps_params, f)
@@ -137,14 +159,7 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
             params = all_steps_params[step_key]
             final_sequence_length = params['sequence_length']
 
-            model = Sequential([
-                LSTM(params['n_lstm'], input_shape=(final_sequence_length, x_train_scaled.shape[1]), unroll=True,
-                     dtype='float16'),
-                Dense(params['n_dense'], activation='relu'),
-                Dense(1, dtype='float32')
-            ])
-            if cliping_and_customLoss == 0: model.compile(loss=custom_loss, optimizer=Adam(learning_rate=params['lr']), metrics=['mse'])
-            else: model.compile(loss="mae", optimizer=Adam(learning_rate=params['lr']), metrics=['mse'])
+            model = _build_step_model(params, final_sequence_length, x_train_scaled.shape[1], model_loss)
 
             if i > 0:
                 prev_path = f"{checkpoint_base}{i - 1}.keras"
@@ -192,7 +207,7 @@ def train_lstm_direct_multistep(data, checkpoint_dir, n_out, train_size, calc_go
         y_test_combined_trimmed = y_test_combined[max_possible_window - 1:]
         y_test_trimmed = y_test[max_possible_window - 1:]
 
-        if cliping_and_customLoss == 0.0:
+        if cliping_and_customLoss == 0:
             yhat[yhat < y_test_combined_trimmed[:, 2][:, None]] = 0
             n_max = y_test_combined_trimmed[:, 1][:, None]
             yhat = np.where(yhat > n_max, n_max, yhat)

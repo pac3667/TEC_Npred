@@ -1,0 +1,7 @@
+Run started: 2026-07-09T21:08:54
+data_file=C:\Users\oles7\Documents\Study\Sience\1. Приоритет\3. Приоритет 2026\1. Конференции А\4. KDD\3. Program\TEC_Npred-4\TEC_Npred-4\data\TEC22_Data.csv
+reports_dir=C:\Users\oles7\Documents\Study\Sience\1. Приоритет\3. Приоритет 2026\1. Конференции А\4. KDD\3. Program\TEC_Npred-4\TEC_Npred-4\data\reports\TEC22_Data
+plant_id=TEC22
+methods=independent,bottom_up,top_down,ols,wls,mint
+models=LSTM_custom,LSTM_mae,Linear,Polynomial (d=2),Boosting,MLP,RandomForest,Boosting_custom_with_window,LSTM_custom_with_window,LSTM_mae_with_window,RandomForest_mae_with_window,RandomForest_custom_with_window
+Run finished: 2026-07-09T21:09:10

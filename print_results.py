@@ -6,10 +6,13 @@ import seaborn as sns
 from sklearn import metrics
 
 import matplotlib
-#matplotlib.use('module://backend_interagg')
+try:
+    matplotlib.use('module://backend_interagg')
+except ModuleNotFoundError:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-#plt.rcParams['text.antialiased'] = True
-#plt.rcParams['lines.antialiased'] = True
+plt.rcParams['text.antialiased'] = True
+plt.rcParams['lines.antialiased'] = True
 from matplotlib import pyplot as plt, ticker
 
 def print_stat_results(reports_dir, results, y_test, calc_goal):
@@ -78,6 +81,22 @@ def print_stat_results(reports_dir, results, y_test, calc_goal):
         best_stat_model_name = best_model['Model Name']
 
     return best_window_model_name, best_stat_model_name
+def save_calibration_predictions(reports_dir, calibration_results, y_calibration, calc_goal):
+    if not calibration_results:
+        return
+    os.makedirs(reports_dir, exist_ok=True)
+    min_len = min([len(p) for p in calibration_results.values()])
+    export_df = pd.DataFrame({'Actual_N': y_calibration[-min_len:].flatten()})
+
+    for name, pred in calibration_results.items():
+        export_df[name] = pred[-min_len:].flatten()
+
+    if calc_goal == 'TEC':
+        filepath = reports_dir + 'Power_Station_calibration_predictions_comparison.csv'
+    else:
+        filepath = reports_dir + calc_goal + '_calibration_predictions_comparison.csv'
+    export_df.to_csv(filepath, index=False)
+    print(f"[INFO] Calibration predictions exported to '{filepath}'")
 def print_step_results(lstm_multi_results, cbr_multi_results):
     best_step_model = ''
     print("\n" + "=" * 60)
@@ -88,9 +107,70 @@ def print_step_results(lstm_multi_results, cbr_multi_results):
     for i in range(lstm_multi_results.shape[0]):
         print(f"{i + 1:<5} | {lstm_multi_results[i][0]:<12.4f} | {lstm_multi_results[i][1]:<12.4f} | {lstm_multi_results[i][2]:<12.4f} | {lstm_multi_results[i][3]:<12.4f} | {cbr_multi_results[i][0]:<12.4f} | {cbr_multi_results[i][1]:<12.4f} | {cbr_multi_results[i][2]:<12.4f} | {cbr_multi_results[i][3]:<12.4f}")
 
-    if lstm_multi_results.shape[0] < cbr_multi_results[i][0]: best_step_model = 'lstm'
-    else: best_step_model = 'CBR'
+    lstm_mean_wape = np.nanmean(lstm_multi_results[:, 2])
+    cbr_mean_wape = np.nanmean(cbr_multi_results[:, 2])
+    lstm_mean_mae = np.nanmean(lstm_multi_results[:, 0])
+    cbr_mean_mae = np.nanmean(cbr_multi_results[:, 0])
+    print("-" * 60)
+    print(f"Mean WAPE: LSTM={lstm_mean_wape:.4f}, CBR={cbr_mean_wape:.4f}")
+    print(f"Mean MAE:  LSTM={lstm_mean_mae:.4f}, CBR={cbr_mean_mae:.4f}")
+
+    if lstm_mean_wape < cbr_mean_wape:
+        best_step_model = 'lstm'
+    elif cbr_mean_wape < lstm_mean_wape:
+        best_step_model = 'CBR'
+    else:
+        best_step_model = 'lstm' if lstm_mean_mae <= cbr_mean_mae else 'CBR'
+    print(f"Best direct multistep model by mean WAPE: {best_step_model}")
     return best_step_model
+
+
+def save_step_predictions(
+    reports_dir,
+    calc_goal,
+    lstm_multi_results,
+    cbr_multi_results,
+    lstm_multi_metrics,
+    cbr_multi_metrics,
+    best_step_model_name,
+):
+    os.makedirs(reports_dir, exist_ok=True)
+    horizon_count = lstm_multi_results.shape[1]
+    horizon_cols = [f"h{idx:02d}" for idx in range(1, horizon_count + 1)]
+    prefix = "Power_Station" if calc_goal == "TEC" else calc_goal
+
+    pd.DataFrame(lstm_multi_results, columns=horizon_cols).to_csv(
+        os.path.join(reports_dir, f"{prefix}_LSTM_direct_multistep_predictions.csv"),
+        index=False,
+    )
+    pd.DataFrame(cbr_multi_results, columns=horizon_cols).to_csv(
+        os.path.join(reports_dir, f"{prefix}_CBR_direct_multistep_predictions.csv"),
+        index=False,
+    )
+
+    best_predictions = lstm_multi_results if best_step_model_name == "lstm" else cbr_multi_results
+    pd.DataFrame(best_predictions, columns=horizon_cols).to_csv(
+        os.path.join(reports_dir, f"{prefix}_best_direct_multistep_predictions.csv"),
+        index=False,
+    )
+
+    metrics_df = pd.DataFrame({
+        "horizon": horizon_cols,
+        "LSTM_MAE": lstm_multi_metrics[:, 0],
+        "LSTM_MSE": lstm_multi_metrics[:, 1],
+        "LSTM_WAPE_percent": lstm_multi_metrics[:, 2],
+        "LSTM_R2": lstm_multi_metrics[:, 3],
+        "CBR_MAE": cbr_multi_metrics[:, 0],
+        "CBR_MSE": cbr_multi_metrics[:, 1],
+        "CBR_WAPE_percent": cbr_multi_metrics[:, 2],
+        "CBR_R2": cbr_multi_metrics[:, 3],
+        "best_model": best_step_model_name,
+    })
+    metrics_df.to_csv(
+        os.path.join(reports_dir, f"{prefix}_direct_multistep_metrics.csv"),
+        index=False,
+    )
+    print(f"[INFO] Direct multistep predictions exported for {prefix}")
 def plot_compare_models_violations(y_true_real, y_pred_custom, y_pred_mae, n_max, n_min, title_suffix=""):
     plt.figure(figsize=(25, 12))
 

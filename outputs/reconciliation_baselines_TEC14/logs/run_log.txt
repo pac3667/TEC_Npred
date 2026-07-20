@@ -1,0 +1,19 @@
+Run started: 2026-07-16T21:26:22
+data_file=C:\Users\oles7\Documents\Study\Sience\1. Приоритет\3. Приоритет 2026\1. Конференции А\4. KDD\3. Program\TEC_Npred-4\TEC_Npred-4\data\TEC14_Data.csv
+reports_dir=C:\Users\oles7\Documents\Study\Sience\1. Приоритет\3. Приоритет 2026\1. Конференции А\4. KDD\3. Program\TEC_Npred-4\TEC_Npred-4\data\reports\TEC14_Data
+plant_id=TEC14
+methods=independent,bottom_up,top_down,ols,wls,mint
+models=LSTM_custom,LSTM_mae,Linear,Polynomial (d=2),Boosting,MLP,RandomForest,Boosting_custom_with_window,LSTM_custom_with_window,LSTM_mae_with_window,RandomForest_mae_with_window,RandomForest_custom_with_window
+WARNING: calibration predictions for model=LSTM_custom were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=LSTM_mae were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=Linear were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=Polynomial (d=2) were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=Boosting were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=MLP were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=RandomForest were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=Boosting_custom_with_window were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=LSTM_custom_with_window were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=LSTM_mae_with_window were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=RandomForest_mae_with_window were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+WARNING: calibration predictions for model=RandomForest_custom_with_window were not found; using unit covariance fallback for WLS/MinT to avoid test leakage.
+Run finished: 2026-07-16T21:26:36

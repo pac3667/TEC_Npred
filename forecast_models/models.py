@@ -34,6 +34,31 @@ def get_catboost(X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_test, scal
                               loss_function='MAE',
                               verbose=0)
     return model
+
+
+def _compile_lstm_from_params(input_shape, best_params, model_loss):
+    model = Sequential([
+        LSTM(best_params['n_units_lstm'], input_shape=input_shape, unroll=True),
+        Dense(best_params['n_units_dense']),
+        Dense(1, dtype='float32')
+    ])
+    optimizer = Adam(learning_rate=best_params['lr'])
+    model.compile(optimizer=optimizer, loss=model_loss)
+    return model
+
+
+def _compile_mlp_from_params(best_params):
+    model = Sequential()
+    for i in range(best_params['n_layers']):
+        model.add(Dense(best_params[f'units_l{i}'], activation='relu'))
+
+    model.add(Dense(1, dtype='float32'))
+
+    optimizer = Adam(learning_rate=best_params['lr'])
+    model.compile(optimizer=optimizer, loss=custom_loss)
+    return model
+
+
 def get_lstm(input_shape, X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y,
              y_train_s_combined, y_test_s_combined, checkpoint_dir, calc_goal, loss_type='custom'):
 
@@ -45,11 +70,20 @@ def get_lstm(input_shape, X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_t
 
     if os.path.exists(checkpoint_filepath) and os.path.exists(params_filepath):
         print(f"Loading model and best parameters for {loss_type} loss...")
-        model = load_model(checkpoint_filepath, custom_objects=custom_objs)
-        model.optimizer.learning_rate.assign(1e-4)
-        current_epochs = 50
-        early_stop_callback = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True,
-                                            min_delta=0.0001)
+        try:
+            model = load_model(checkpoint_filepath, custom_objects=custom_objs)
+            model.optimizer.learning_rate.assign(1e-4)
+            current_epochs = 50
+            early_stop_callback = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True,
+                                                min_delta=0.0001)
+        except Exception as exc:
+            print(f"Checkpoint is incompatible, rebuilding {loss_type} LSTM from saved parameters: {exc}")
+            with open(params_filepath, 'r') as f:
+                best_params = json.load(f)
+            current_epochs = 1000
+            early_stop_callback = EarlyStopping(monitor='val_loss', patience=100, verbose=1,
+                                                restore_best_weights=True, min_delta=0.0001)
+            model = _compile_lstm_from_params(input_shape, best_params, model_loss)
     else:
         print(f"Starting hyperparameter optimization for {loss_type} loss...")
         study = optuna.create_study(direction='minimize')
@@ -66,13 +100,7 @@ def get_lstm(input_shape, X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_t
         early_stop_callback = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True,
                                             min_delta=0.0001)
 
-        model = Sequential([
-            LSTM(best_params['n_units_lstm'], input_shape=input_shape, unroll=True),
-            Dense(best_params['n_units_dense']),
-            Dense(1, dtype='float32')
-        ])
-        optimizer = Adam(learning_rate=best_params['lr'])
-        model.compile(optimizer=optimizer, loss=model_loss)
+        model = _compile_lstm_from_params(input_shape, best_params, model_loss)
         is_mixed = isinstance(model.optimizer, tf.keras.mixed_precision.LossScaleOptimizer)
         print(f"--- Аппаратный Loss Scale для float16 активен: {is_mixed} ---")
 
@@ -81,13 +109,20 @@ def get_linear(): return LinearRegression()
 def get_mlp(input_shape, X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y, y_train_s_combined, y_test_s_combined, checkpoint_filepath, params_filepath):
     if os.path.exists(checkpoint_filepath) and os.path.exists(params_filepath):
         print("Loading model and best parameters...")
-        model = load_model(checkpoint_filepath, custom_objects={'custom_loss': custom_loss})
-
-        model.optimizer.learning_rate.assign(1e-4)
-
-        current_epochs = 50
-        early_stop_callback = EarlyStopping(monitor='val_loss', patience=10, verbose=0, restore_best_weights=True,
-                                            min_delta=0.0001)
+        try:
+            model = load_model(checkpoint_filepath, custom_objects={'custom_loss': custom_loss})
+            model.optimizer.learning_rate.assign(1e-4)
+            current_epochs = 50
+            early_stop_callback = EarlyStopping(monitor='val_loss', patience=10, verbose=0, restore_best_weights=True,
+                                                min_delta=0.0001)
+        except Exception as exc:
+            print(f"Checkpoint is incompatible, rebuilding MLP from saved parameters: {exc}")
+            with open(params_filepath, 'r') as f:
+                best_params = json.load(f)
+            current_epochs = 1000
+            early_stop_callback = EarlyStopping(monitor='val_loss', patience=100, verbose=1,
+                                                restore_best_weights=True, min_delta=0.0001)
+            model = _compile_mlp_from_params(best_params)
     else:
         print("Starting hyperparameter optimization...")
         study = optuna.create_study(direction='minimize')
@@ -101,14 +136,7 @@ def get_mlp(input_shape, X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_te
         early_stop_callback = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True,
                                             min_delta=0.0001)
 
-        model = Sequential()
-        for i in range(best_params['n_layers']):
-            model.add(Dense(best_params[f'units_l{i}'], activation='relu'))
-
-        model.add(Dense(1, dtype='float32'))
-
-        optimizer = Adam(learning_rate=best_params['lr'])
-        model.compile(optimizer=optimizer, loss=custom_loss)
+        model = _compile_mlp_from_params(best_params)
     return model, early_stop_callback, current_epochs
 def get_rfr(X_train_s, X_test_s, y_train_s, y_test_s, y_train, y_test, scaler_y):
     study = optuna.create_study(direction="minimize", pruner=optuna.pruners.MedianPruner())
